@@ -1,0 +1,22 @@
+login
+    frontend: /login
+    backend: /login
+request:
+{
+    "username":
+    "password": in ce forma trebuie trimisa parola, hash sau in clar?
+}
+response:
+{
+    "status":
+    "message":
+    "token"?:
+}
+    status:
+        200 -> Ok, correct credentials
+        401 -> Unauthorized, incorrect credentials
+    message:
+        "User logged in" -> if status == 200
+        "Invalid credentials" -> if status == 401
+    token:
+        "<session_token>" -> field appears in response if status == 200
