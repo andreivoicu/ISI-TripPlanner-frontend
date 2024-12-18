@@ -23,6 +23,13 @@ const Login = () => {
             return;
         }
 
+        if (data.password_signup && data.confirm_password) {
+            if (data.password_signup !== data.confirm_password) {
+                alert("Passwords do not match.");
+                return; // Exit the function if passwords don't match
+            }
+        }
+
         // replace password_<signup or login> with password, same goes for username
         const requestData = {};
         Object.keys(data).forEach(key => {
@@ -66,7 +73,9 @@ const Login = () => {
                         console.error("Failed to save auth token in localStorage");
                     }
                     navigate('/home');
-                } 
+                } else {
+                    window.location.reload();
+                }
             } else {
                 console.error(`Error: ${JSON.stringify(await response.json())}`);
             }
