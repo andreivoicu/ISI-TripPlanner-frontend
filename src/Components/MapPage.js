@@ -33,6 +33,7 @@ const MapPage = () => {
     const [suggestions, setSuggestions] = useState([]);
     const [view, setView] = useState(null);
     const [sights, setSights] = useState([]);
+    const [directions, setDirections] = useState([]);
 
     // get device's location
     useEffect(() => {
@@ -71,7 +72,7 @@ const MapPage = () => {
             geometry: point,
             symbol: symbol,
             attributes: { label },
-            popupTemplate: label ? { title: label } : undefined
+            popupTemplate: { title: label }
         });
 
         viewRef.current.graphics.add(pointGraphic);
@@ -93,6 +94,11 @@ const MapPage = () => {
             zoom: 13
         });
         viewRef.current = view;
+
+        view.when(() => {
+            addPointOnGraphic(location.longitude, location.latitude, 'red');
+            view.center = [location.longitude, location.latitude];
+        });
 
         return () => {
             view.destroy();
@@ -124,7 +130,7 @@ const MapPage = () => {
         }
     };
 
-    const calculateAndPrintRoute = async (POIs) => {
+    const calculateAndPrintRoute = async (POIs, startLongitude, startLatitude) => {
 
         // add the points to the map
         console.log("debug POI points");
@@ -145,7 +151,13 @@ const MapPage = () => {
             longitude: poi.geometry.location.lng
         }));
 
-        const routeServiceURL = " https://route-api.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World/solve";
+        // adding the starting point (current location) at the beggining
+        stops.unshift(new Point({
+            latitude: startLatitude,
+            longitude: startLongitude
+        }));
+
+        const routeServiceURL = "https://route-api.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World/solve";
         const params = {
             f: "json",
             stops: stops.map(stop => `${stop.longitude},${stop.latitude}`).join(';'),
@@ -157,6 +169,7 @@ const MapPage = () => {
 
         try {
             const response = await axios.get(routeServiceURL, { params });
+            console.log(response);
 
             if (response.data.routes) {
                 const routeGeometry = response.data.routes.features[0].geometry;
@@ -176,6 +189,21 @@ const MapPage = () => {
                 });
 
                 viewRef.current.graphics.add(routeGraphic);
+
+                if (response.data.directions && response.data.directions[0].features) {
+                    const directions = response.data.directions[0].features;
+                    
+                    const directionsAsText = directions.map((direction, index) => ({
+                        index: index,
+                        text: direction.attributes.text
+                    }));
+
+                    console.log(`directions: `);
+                    console.log(directionsAsText);
+                    setDirections(directionsAsText);
+                } else {
+                    console.error("No directions found in the response.");
+                }
             } else {
                 console.error('Route calculation failed');
             }
@@ -219,7 +247,7 @@ const MapPage = () => {
         
         console.log(currentLocationSightList);
 
-        calculateAndPrintRoute(currentLocationSightList);
+        calculateAndPrintRoute(currentLocationSightList, longitude, latitude);
     };
 
     // suggestion handler
@@ -329,6 +357,29 @@ const MapPage = () => {
                         </li>
                     ))}
                 </ul>
+            )}
+            {directions.length > 0 && (
+                <div style={{
+                    position: 'absolute',
+                    top: '15%',
+                    right: '1%',
+                    width: '300px',
+                    maxHeight: '80vh',
+                    overflowY: 'scroll',
+                    border: '1px solid #ccc',
+                    backgroundColor: '#f9f9f9',
+                    boxShadow: '0 0 10px rgba(0, 0, 0, 0.1)',
+                    zIndex: 10
+                }}>
+                    <h3>Directions:</h3>
+                    <ul>
+                        {directions.map((direction) => (
+                            <li key={direction.index}>
+                                <strong>Step {direction.index + 1}:</strong> {direction.text}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
             )}
             <div
                 style={{ height: '100vh', width: '100vw' }}
