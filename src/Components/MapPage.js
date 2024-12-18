@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import Map from '@arcgis/core/Map';
 import MapView from '@arcgis/core/views/MapView';
 import Graphic from '@arcgis/core/Graphic';
+import Polyline from '@arcgis/core/geometry/Polyline';
 import Point from '@arcgis/core/geometry/Point';
 import SimpleMarkerSymbol from '@arcgis/core/symbols/SimpleMarkerSymbol';
 import RouteLayer from '@arcgis/core/layers/RouteLayer';
@@ -93,12 +94,6 @@ const MapPage = () => {
         });
         viewRef.current = view;
 
-        // TODO add the point only from location, not when searchig for a city
-        view.when(() => {
-            addPointOnGraphic(location.longitude, location.latitude, 'green');
-            view.center = [location.longitude, location.latitude];
-        });
-
         return () => {
             view.destroy();
         };
@@ -130,6 +125,21 @@ const MapPage = () => {
     };
 
     const calculateAndPrintRoute = async (POIs) => {
+
+        // add the points to the map
+        console.log("debug POI points");
+        POIs.forEach(poi => {
+            const label = `${poi.name}\nRating: ${poi.rating}`
+            console.log(`label: ${label}`);
+            
+            addPointOnGraphic(
+                poi.geometry.location.lng,
+                poi.geometry.location.lat,
+                'green',
+                label
+            );
+        });
+
         const stops = POIs.map(poi => new Point({
             latitude: poi.geometry.location.lat,
             longitude: poi.geometry.location.lng
@@ -148,16 +158,19 @@ const MapPage = () => {
         try {
             const response = await axios.get(routeServiceURL, { params });
 
-            console.log(response);
-            console.log(params);
+            if (response.data.routes) {
+                const routeGeometry = response.data.routes.features[0].geometry;
 
-            if (response.data.routes && response.data.routes.length > 0) {
-                const route = response.data.routes[0];
+                const polyline = new Polyline({
+                    paths: routeGeometry.paths,
+                    spatialReference: { wkid: 4326 }
+                })
+
                 const routeGraphic = new Graphic({
-                    geometry: route.geometry,
+                    geometry: polyline,
                     symbol: {
                         type: 'simple-line',
-                        color: [255, 0, 0],
+                        color: [80, 130, 220],
                         width: 4
                     }
                 });
@@ -173,20 +186,20 @@ const MapPage = () => {
 
     const fetchPOIs = async (longitude, latitude) => {
         const url = PLACES_GOOGLE_API_URL;
-        const params = {
-            location: `${latitude},${longitude}`,
-            radius: 10000, // 10 km radius
-            keyword: 'restaurant',
-        };
 
         const currentLocationSightList = [];
         for (const sightType of sightsList) {
+            const params = {
+                location: `${latitude},${longitude}`,
+                radius: 10000, // 10 km radius
+                keyword: sightType,
+            };
             try {
                 const response = await axios.get(url, { params });
                 const results = response.data.results;
     
                 const uniqueResults = results.reduce((acc, current) => {
-                    if (!acc.some(item => item.name === current.name)) {
+                    if (!acc.some(item => item.name === current.name) && !currentLocationSightList.includes(current.name)) {
                         acc.push(current);
                     }
                     return acc;
