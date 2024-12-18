@@ -2,18 +2,40 @@ import React, { useEffect, useRef, useState } from 'react';
 import Map from '@arcgis/core/Map';
 import MapView from '@arcgis/core/views/MapView';
 import Graphic from '@arcgis/core/Graphic';
+import Polyline from '@arcgis/core/geometry/Polyline';
 import Point from '@arcgis/core/geometry/Point';
 import SimpleMarkerSymbol from '@arcgis/core/symbols/SimpleMarkerSymbol';
+import RouteLayer from '@arcgis/core/layers/RouteLayer';
+import Directions from '@arcgis/core/widgets/Directions';
 import { suggestLocations, addressToLocations } from '@arcgis/core/rest/locator';
 import Config from '@arcgis/core/config';
 import '@arcgis/core/assets/esri/themes/light/main.css';
+import axios from 'axios';
+
+const GOOGLE_API_KEY = process.env.REACT_APP_GOOGLE_PLACES_API_KEY;
+const ARCGIS_API_KEY = process.env.REACT_APP_ARCGIS_API_KEY
+const API_URL = process.env.REACT_APP_API_URL;
+const PLACES_GOOGLE_API_URL = `${API_URL}/places/google`;
+
+const ENTRIES_FOR_EACH_SIGHT_TYPE = 2;
+const sightsList = [
+    "museum",
+    "tourist attraction",
+    "historic sites",
+    "art gallery"
+]
 
 const MapPage = () => {
     const mapRef = useRef();
+    const viewRef = useRef();
     const [location, setLocation] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [suggestions, setSuggestions] = useState([]);
+    const [view, setView] = useState(null);
+    const [sights, setSights] = useState([]);
+    const [directions, setDirections] = useState([]);
 
+    // get device's location
     useEffect(() => {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -28,51 +50,54 @@ const MapPage = () => {
         } else {
             console.warn("Geolocation is not supported by this browser.");
         }
-    }, []); // Only run once when the component is mounted
+    }, []);
 
+    // Function to add a point on the current map
+    const addPointOnGraphic = (longitude, latitude, color, label) => {
+        const point = new Point({
+            longitude: longitude,
+            latitude: latitude
+        });
+
+        const symbol = new SimpleMarkerSymbol({
+            color: color,
+            size: 12,
+            outline: {
+                color: 'white',
+                width: 2
+            }
+        });
+
+        const pointGraphic = new Graphic({
+            geometry: point,
+            symbol: symbol,
+            attributes: { label },
+            popupTemplate: { title: label }
+        });
+
+        viewRef.current.graphics.add(pointGraphic);
+    };
+
+    // create the map
     useEffect(() => {
-        if (!location) return; // Don't initialize map if location is not available yet.
+        if (!location) 
+            return;
 
-        // Initialize the Map and View
         const map = new Map({
             basemap: 'streets'
         });
 
         const view = new MapView({
-            container: mapRef.current, // Attach map to DOM element
+            container: mapRef.current,
             map: map,
-            center: [location.longitude, location.latitude], // Center map at user's location
+            center: [location.longitude, location.latitude],
             zoom: 13
         });
+        viewRef.current = view;
 
-        // Function to add the current location as a point
-        const addPointOnGraphic = (longitude, latitude, color) => {
-            const point = new Point({
-                longitude: longitude,
-                latitude: latitude
-            });
-
-            const symbol = new SimpleMarkerSymbol({
-                color: color,
-                size: 12,
-                outline: {
-                    color: 'white',
-                    width: 2
-                }
-            });
-
-            const pointGraphic = new Graphic({
-                geometry: point,
-                symbol: symbol
-            });
-
-            view.graphics.add(pointGraphic); // Add point graphic to the map
-        };
-
-        // Once the map is ready, add the point on the user's location
         view.when(() => {
-            addPointOnGraphic(location.longitude, location.latitude, 'green');
-            view.center = [location.longitude, location.latitude]; // Ensure map is centered at the location
+            addPointOnGraphic(location.longitude, location.latitude, 'red');
+            view.center = [location.longitude, location.latitude];
         });
 
         return () => {
@@ -80,6 +105,7 @@ const MapPage = () => {
         };
     }, [location]);
 
+    // search bar handler
     const handleSearchChange = (e) => {
         const value = e.target.value;
         setSearchTerm(value);
@@ -88,7 +114,7 @@ const MapPage = () => {
 
             const locatorSuggestLocationsParams = {
                 text: value,
-                location: location ? new Point({ longitude: location.longitude, latitude: location.latitude }) : undefined  // Optionally include current location
+                location: location ? new Point({ longitude: location.longitude, latitude: location.latitude }) : undefined
             };
             suggestLocations(
                 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer',
@@ -104,30 +130,149 @@ const MapPage = () => {
         }
     };
 
+    const calculateAndPrintRoute = async (POIs, startLongitude, startLatitude) => {
+
+        // add the points to the map
+        console.log("debug POI points");
+        POIs.forEach(poi => {
+            const label = `${poi.name}\nRating: ${poi.rating}`
+            console.log(`label: ${label}`);
+            
+            addPointOnGraphic(
+                poi.geometry.location.lng,
+                poi.geometry.location.lat,
+                'green',
+                label
+            );
+        });
+
+        const stops = POIs.map(poi => new Point({
+            latitude: poi.geometry.location.lat,
+            longitude: poi.geometry.location.lng
+        }));
+
+        // adding the starting point (current location) at the beggining
+        stops.unshift(new Point({
+            latitude: startLatitude,
+            longitude: startLongitude
+        }));
+
+        const routeServiceURL = "https://route-api.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World/solve";
+        const params = {
+            f: "json",
+            stops: stops.map(stop => `${stop.longitude},${stop.latitude}`).join(';'),
+            returnDirections: true,
+            returnRouteGraphics: true,
+            outSR: 4326,
+            token: ARCGIS_API_KEY
+        };
+
+        try {
+            const response = await axios.get(routeServiceURL, { params });
+            console.log(response);
+
+            if (response.data.routes) {
+                const routeGeometry = response.data.routes.features[0].geometry;
+
+                const polyline = new Polyline({
+                    paths: routeGeometry.paths,
+                    spatialReference: { wkid: 4326 }
+                })
+
+                const routeGraphic = new Graphic({
+                    geometry: polyline,
+                    symbol: {
+                        type: 'simple-line',
+                        color: [80, 130, 220],
+                        width: 4
+                    }
+                });
+
+                viewRef.current.graphics.add(routeGraphic);
+
+                if (response.data.directions && response.data.directions[0].features) {
+                    const directions = response.data.directions[0].features;
+                    
+                    const directionsAsText = directions.map((direction, index) => ({
+                        index: index,
+                        text: direction.attributes.text
+                    }));
+
+                    console.log(`directions: `);
+                    console.log(directionsAsText);
+                    setDirections(directionsAsText);
+                } else {
+                    console.error("No directions found in the response.");
+                }
+            } else {
+                console.error('Route calculation failed');
+            }
+        } catch (error) {
+            console.error("Error fetching route:", error);
+        }
+    };
+
+    const fetchPOIs = async (longitude, latitude) => {
+        const url = PLACES_GOOGLE_API_URL;
+
+        const currentLocationSightList = [];
+        for (const sightType of sightsList) {
+            const params = {
+                location: `${latitude},${longitude}`,
+                radius: 10000, // 10 km radius
+                keyword: sightType,
+            };
+            try {
+                const response = await axios.get(url, { params });
+                const results = response.data.results;
+    
+                const uniqueResults = results.reduce((acc, current) => {
+                    if (!acc.some(item => item.name === current.name) && !currentLocationSightList.includes(current.name)) {
+                        acc.push(current);
+                    }
+                    return acc;
+                }, []);
+                
+                // sorting the results so that the best ratings are first
+                uniqueResults.sort((a, b) => b.rating - a.rating);
+                console.log(uniqueResults);
+
+                const bestResults = uniqueResults.slice(0, ENTRIES_FOR_EACH_SIGHT_TYPE);
+                currentLocationSightList.push(...bestResults);
+
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+        
+        console.log(currentLocationSightList);
+
+        calculateAndPrintRoute(currentLocationSightList, longitude, latitude);
+    };
+
+    // suggestion handler
     const handleSuggestionSelect = (suggestion) => {
-        console.log(suggestion);
 
         // Use magicKey to fetch detailed location information
         const magicKey = suggestion.magicKey;
 
         if (magicKey) {
             const locatorAddressParams = {
-                magicKey: magicKey  // Use magicKey for address lookup
+                magicKey: magicKey
             };
 
             addressToLocations(
                 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer',
                 locatorAddressParams
             ).then((response) => {
-                console.log("response from addressToLocations:");
-                console.log(response);
-
                 if (response && response.length > 0) {
-                    const { location } = response[0];  // Destructure coordinates
+                    const { location } = response[0];
                     setLocation({
                         longitude: location.x,
                         latitude: location.y
                     });
+
+                    fetchPOIs(location.x, location.y);
                 } else {
                     console.warn("No detailed location found for the selected suggestion.");
                 }
@@ -136,7 +281,7 @@ const MapPage = () => {
             });
         }
 
-        setSuggestions([]);  // Clear suggestions after selection
+        setSuggestions([]);
     };
 
     const handleBack = () => {
@@ -148,17 +293,17 @@ const MapPage = () => {
             <button 
                 onClick={handleBack}
                 style={{
-                    position: 'absolute', // Position the button relative to the parent div
-                    bottom: '1%', // Adjust as needed
-                    left: '1%', // Adjust as needed
-                    zIndex: 10, // Ensure it appears above other content like the map
+                    position: 'absolute',
+                    bottom: '1%',
+                    left: '1%',
+                    zIndex: 10,
                     padding: '10px 20px',
                     backgroundColor: '#007BFF',
                     color: 'white',
                     border: 'none',
                     borderRadius: '5px',
                     cursor: 'pointer'
-                }}
+                }}  
             >
                 Back
             </button>
@@ -212,6 +357,29 @@ const MapPage = () => {
                         </li>
                     ))}
                 </ul>
+            )}
+            {directions.length > 0 && (
+                <div style={{
+                    position: 'absolute',
+                    top: '15%',
+                    right: '1%',
+                    width: '300px',
+                    maxHeight: '80vh',
+                    overflowY: 'scroll',
+                    border: '1px solid #ccc',
+                    backgroundColor: '#f9f9f9',
+                    boxShadow: '0 0 10px rgba(0, 0, 0, 0.1)',
+                    zIndex: 10
+                }}>
+                    <h3>Directions:</h3>
+                    <ul>
+                        {directions.map((direction) => (
+                            <li key={direction.index}>
+                                <strong>Step {direction.index + 1}:</strong> {direction.text}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
             )}
             <div
                 style={{ height: '100vh', width: '100vw' }}
