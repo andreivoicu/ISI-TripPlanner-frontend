@@ -17,15 +17,14 @@ const API_URL = process.env.REACT_APP_API_URL;
 const PLACES_GOOGLE_API_URL = `${API_URL}/places/google`;
 const ADD_ROUTE_URL = `${API_URL}/route`; // TODO make sure this is correct
 
-const ENTRIES_FOR_EACH_SIGHT_TYPE = 2;
-const sightsList = [
-    "museum",
-    "tourist attraction",
-    "historic sites",
-    "art gallery"
-]
+const MapPage = ({ settings }) => {
+    console.log("settings in MapPage");
+    console.log(settings);
+    const radius = settings.radius
+    const sightsList = settings.sightTypes;
+    const entryNo = settings.entryNoForEachSightType;
 
-const MapPage = () => {
+
     const mapRef = useRef();
     const viewRef = useRef();
     const [location, setLocation] = useState(null);
@@ -234,10 +233,16 @@ const MapPage = () => {
         const url = PLACES_GOOGLE_API_URL;
 
         const currentLocationSightList = [];
+
+        console.log("radius: ");
+        console.log(radius);
+
+        console.log("sights list: ");
+        console.log(sightsList);
         for (const sightType of sightsList) {
             const params = {
                 location: `${latitude},${longitude}`,
-                radius: 10000, // 10 km radius
+                radius: radius,
                 keyword: sightType,
             };
             try {
@@ -255,7 +260,7 @@ const MapPage = () => {
                 uniqueResults.sort((a, b) => b.rating - a.rating);
                 console.log(uniqueResults);
 
-                const bestResults = uniqueResults.slice(0, ENTRIES_FOR_EACH_SIGHT_TYPE);
+                const bestResults = uniqueResults.slice(0, entryNo);
                 currentLocationSightList.push(...bestResults);
 
             } catch (error) {
@@ -348,8 +353,8 @@ const MapPage = () => {
         });
 
         const sightListAndCityNameForExport = {
-            name: currentCityName,
-            ...sightListForExport
+            city: currentCityName,
+            sights: sightListForExport
         };
 
         try {

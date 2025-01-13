@@ -72,7 +72,7 @@ const HomePage = () => {
                                 color: "white",
                             }}
                         >
-                            Go to Account Info
+                            Account Info
                         </Link>
                     </button>
                     <button
@@ -94,9 +94,32 @@ const HomePage = () => {
                                 color: "white",
                             }}
                         >
-                            Go to Map
+                            Map
                         </Link>
                     </button>
+                    <button
+                        style={{
+                            margin: "10px",
+                            padding: "15px 30px",
+                            backgroundColor: "#4CAF50", // Green background for the button
+                            color: "white",
+                            border: "none",
+                            borderRadius: "5px",
+                            cursor: "pointer",
+                            fontSize: "20px",
+                        }}
+                    >
+                        <Link
+                            to="/settings"
+                            style={{
+                                textDecoration: "none",
+                                color: "white",
+                            }}
+                        >
+                            Settings 
+                        </Link>
+                    </button>
+                    
                 </div>
             </div>
         </div>
