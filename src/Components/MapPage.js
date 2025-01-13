@@ -12,20 +12,19 @@ import Config from '@arcgis/core/config';
 import '@arcgis/core/assets/esri/themes/light/main.css';
 import axios from 'axios';
 
-const GOOGLE_API_KEY = process.env.REACT_APP_GOOGLE_PLACES_API_KEY;
 const ARCGIS_API_KEY = process.env.REACT_APP_ARCGIS_API_KEY
 const API_URL = process.env.REACT_APP_API_URL;
 const PLACES_GOOGLE_API_URL = `${API_URL}/places/google`;
+const ADD_ROUTE_URL = `${API_URL}/route`; // TODO make sure this is correct
 
-const ENTRIES_FOR_EACH_SIGHT_TYPE = 2;
-const sightsList = [
-    "museum",
-    "tourist attraction",
-    "historic sites",
-    "art gallery"
-]
+const MapPage = ({ settings }) => {
+    console.log("settings in MapPage");
+    console.log(settings);
+    const radius = settings.radius
+    const sightsList = settings.sightTypes;
+    const entryNo = settings.entryNoForEachSightType;
 
-const MapPage = () => {
+
     const mapRef = useRef();
     const viewRef = useRef();
     const [location, setLocation] = useState(null);
@@ -34,9 +33,17 @@ const MapPage = () => {
     const [view, setView] = useState(null);
     const [sights, setSights] = useState([]);
     const [directions, setDirections] = useState([]);
+    const [isEditingArea, setIsEditingArea] = useState(false);
+    const [hasToken, setHasToken] = useState(false);
+    const [isRouteAddedMessageVisible, setIsRouteAddedMessageVisible] = useState(false);
+    const [currentCityName, setCurrentCityName] = useState("");
 
-    // get device's location
+    // get device's location and check for token
     useEffect(() => {
+        const token = localStorage.getItem('token');
+        // set to true if the token is set
+        setHasToken(!!token);
+
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
@@ -94,6 +101,7 @@ const MapPage = () => {
             zoom: 13
         });
         viewRef.current = view;
+        // view.on('click', handleMapClick);
 
         view.when(() => {
             addPointOnGraphic(location.longitude, location.latitude, 'red');
@@ -130,8 +138,17 @@ const MapPage = () => {
         }
     };
 
-    const calculateAndPrintRoute = async (POIs, startLongitude, startLatitude) => {
+    // clear the current map
+    const clearGraphics = () => {
+        if (viewRef.current) {
+            viewRef.current.graphics.removeAll();
+        }
+        setDirections([]);
+        setSights([]);
+    };
 
+    const calculateAndPrintRoute = async (POIs, startLongitude, startLatitude) => {
+        setSights(POIs);
         // add the points to the map
         console.log("debug POI points");
         POIs.forEach(poi => {
@@ -216,10 +233,16 @@ const MapPage = () => {
         const url = PLACES_GOOGLE_API_URL;
 
         const currentLocationSightList = [];
+
+        console.log("radius: ");
+        console.log(radius);
+
+        console.log("sights list: ");
+        console.log(sightsList);
         for (const sightType of sightsList) {
             const params = {
                 location: `${latitude},${longitude}`,
-                radius: 10000, // 10 km radius
+                radius: radius,
                 keyword: sightType,
             };
             try {
@@ -237,7 +260,7 @@ const MapPage = () => {
                 uniqueResults.sort((a, b) => b.rating - a.rating);
                 console.log(uniqueResults);
 
-                const bestResults = uniqueResults.slice(0, ENTRIES_FOR_EACH_SIGHT_TYPE);
+                const bestResults = uniqueResults.slice(0, entryNo);
                 currentLocationSightList.push(...bestResults);
 
             } catch (error) {
@@ -247,11 +270,40 @@ const MapPage = () => {
         
         console.log(currentLocationSightList);
 
+        setSights(currentLocationSightList);
         calculateAndPrintRoute(currentLocationSightList, longitude, latitude);
     };
 
+    // handle clicks on the map
+    useEffect(() => {
+        if (!isEditingArea) return;
+
+        const handleMapClick = async (event) => {
+            event.stopPropagation();
+            
+            try {
+                const { longitude, latitude } = event.mapPoint;
+                console.log(`map coordinate: ${longitude}, ${latitude}`);
+                addPointOnGraphic(longitude, latitude, 'red');
+                setIsEditingArea(false);
+                await fetchPOIs(longitude, latitude);
+            } catch (error) {
+                console.error(`useEffect isEditingArea error: ${error}`);
+            }
+        };
+
+        const mapView = viewRef.current;
+        const clickHandler = mapView.on('click', handleMapClick);
+
+        return () => {
+            clickHandler.remove();
+        }
+
+    }, [isEditingArea, fetchPOIs]);
+
     // suggestion handler
     const handleSuggestionSelect = (suggestion) => {
+        setCurrentCityName(suggestion.text.split(',')[0]);
 
         // Use magicKey to fetch detailed location information
         const magicKey = suggestion.magicKey;
@@ -284,12 +336,125 @@ const MapPage = () => {
         setSuggestions([]);
     };
 
+    const handleSaveRoute = async () => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            console.error('No token found in localStorage.');
+            return;
+        }
+
+        const sightListForExport = sights.map(sight => {
+            return {
+                name: sight.name,
+                rating: sight.rating,
+                longitude: sight.geometry.location.lng,
+                latitude: sight.geometry.location.lat,
+            }
+        });
+
+        const sightListAndCityNameForExport = {
+            city: currentCityName,
+            sights: sightListForExport
+        };
+
+        try {
+            const response = await axios.post(ADD_ROUTE_URL, {
+                data: sightListAndCityNameForExport
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log(`received response, status: ${response.status}`);
+
+            if (response.status == 200) {
+                setIsRouteAddedMessageVisible(true);
+
+                setTimeout(() => {
+                    setIsRouteAddedMessageVisible(false)
+                }, 1500);
+            }
+        } catch (error) {
+            console.error(`Error from sending post request to save route: ${error}`);
+        }
+    };
+
     const handleBack = () => {
         window.history.back();
     };
 
     return (
         <div style={{ position: 'relative', height: '100vh', width: '100vw' }}>
+
+            {/* route successfully added message */}
+            {isRouteAddedMessageVisible && (
+                <div style={{
+                    position: 'fixed',
+                    bottom: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    backgroundColor: '#4CAF50',  // Green color
+                    color: 'white',
+                    padding: '10px 20px',
+                    borderRadius: '5px',
+                    boxShadow: '0 0 10px rgba(0, 0, 0, 0.2)',
+                    zIndex: 1000
+                }}>
+                    Route has been saved!
+                </div>
+            )}
+
+            {/* save the route button */}
+            {hasToken && sights.length > 0 && (
+                <button
+                    onClick={handleSaveRoute}
+                    style={{
+                        position: 'absolute',
+                        top: '10%',
+                        right: '10%',
+                        zIndex: 10,
+                        padding: '10px 20px',
+                        backgroundColor: '#4CAF50',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                    }}
+                >
+                    Save route
+                </button>
+            )}
+
+            {/* change the area button */}
+            {directions.length > 0 && (
+                <button
+                    onClick={() => {
+                        console.log(`updating value of isEditingArea from ${isEditingArea}`);
+                        setIsEditingArea(true);
+                        console.log(`to ${isEditingArea}`);
+                        clearGraphics(); // Clear graphics when entering edit mode
+                    }}
+                    style={{
+                        position: 'absolute',
+                        bottom: '1%',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        padding: '10px 20px',
+                        backgroundColor: '#28a745',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '5px',
+                        cursor: 'pointer',
+                        zIndex: 10
+                    }}
+                >
+                    Change the Area
+                </button>
+            )}            
+
+            {/* back button */}
             <button 
                 onClick={handleBack}
                 style={{
