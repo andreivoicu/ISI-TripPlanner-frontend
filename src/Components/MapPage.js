@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import Map from '@arcgis/core/Map';
 import MapView from '@arcgis/core/views/MapView';
 import Graphic from '@arcgis/core/Graphic';
@@ -12,14 +13,16 @@ import Config from '@arcgis/core/config';
 import '@arcgis/core/assets/esri/themes/light/main.css';
 import axios from 'axios';
 
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const ARCGIS_API_KEY = process.env.REACT_APP_ARCGIS_API_KEY
 const API_URL = process.env.REACT_APP_API_URL;
 const PLACES_GOOGLE_API_URL = `${API_URL}/places/google`;
-const ADD_ROUTE_URL = `${API_URL}/route`; // TODO make sure this is correct
+const ADD_ROUTE_URL = `${API_URL}/routes`;
 
 const MapPage = ({ settings }) => {
-    console.log("settings in MapPage");
-    console.log(settings);
+    const { state } = useLocation();
+
     const radius = settings.radius
     const sightsList = settings.sightTypes;
     const entryNo = settings.entryNoForEachSightType;
@@ -37,6 +40,9 @@ const MapPage = ({ settings }) => {
     const [hasToken, setHasToken] = useState(false);
     const [isRouteAddedMessageVisible, setIsRouteAddedMessageVisible] = useState(false);
     const [currentCityName, setCurrentCityName] = useState("");
+    const [isRouteAddSuccessful, setIsRouteAddSuccessful] = useState(false);
+
+    const [isAddRouteButtonClicked, setIsAddRouteButtonClicked] = useState(false);
 
     // get device's location and check for token
     useEffect(() => {
@@ -44,7 +50,7 @@ const MapPage = ({ settings }) => {
         // set to true if the token is set
         setHasToken(!!token);
 
-        if (navigator.geolocation) {
+        if (navigator.geolocation && !state) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
                     const { longitude, latitude } = position.coords;
@@ -57,7 +63,66 @@ const MapPage = ({ settings }) => {
         } else {
             console.warn("Geolocation is not supported by this browser.");
         }
-    }, []);
+    }, [state]);
+
+    useEffect(() => {
+        if (!state && !location) {
+            return;
+        }
+
+        const map = new Map({
+            basemap: 'streets'
+        });
+
+        let latitude = null, longitude = null;
+        let formattedPOIs = null;
+             
+        if (state) {
+            const startingPoint = state.startingPoint;
+            formattedPOIs = state.formattedPOIs;
+            
+            longitude = startingPoint.longitude;
+            latitude = startingPoint.latitude; 
+        }
+        
+        if (location) {
+            longitude = location.longitude;
+            latitude = location.latitude;
+        }
+
+        const view = new MapView({
+            container: mapRef.current,
+            map: map,
+            center: [longitude, latitude],
+            zoom: 13
+        });
+
+        viewRef.current = view;
+        // view.on('click', handleMapClick);
+
+        view.when(() => {
+            addPointOnGraphic(longitude, latitude, 'red');
+            view.center = [longitude, latitude];
+
+            if (formattedPOIs) {
+                try {
+                    calculateAndPrintRoute(
+                        formattedPOIs,
+                        longitude,
+                        latitude,
+                    );
+                } catch (error) {
+                    console.error('Error calculating LOADED route:', error);
+                }
+            }
+        });
+
+        // setLocation({ longitude, latitude });
+
+        return () => {
+            view.destroy();
+        };
+    }, [state, location]);
 
     // Function to add a point on the current map
     const addPointOnGraphic = (longitude, latitude, color, label) => {
@@ -84,34 +149,6 @@ const MapPage = ({ settings }) => {
 
         viewRef.current.graphics.add(pointGraphic);
     };
-
-    // create the map
-    useEffect(() => {
-        if (!location) 
-            return;
-
-        const map = new Map({
-            basemap: 'streets'
-        });
-
-        const view = new MapView({
-            container: mapRef.current,
-            map: map,
-            center: [location.longitude, location.latitude],
-            zoom: 13
-        });
-        viewRef.current = view;
-        // view.on('click', handleMapClick);
-
-        view.when(() => {
-            addPointOnGraphic(location.longitude, location.latitude, 'red');
-            view.center = [location.longitude, location.latitude];
-        });
-
-        return () => {
-            view.destroy();
-        };
-    }, [location]);
 
     // search bar handler
     const handleSearchChange = (e) => {
@@ -148,12 +185,25 @@ const MapPage = ({ settings }) => {
     };
 
     const calculateAndPrintRoute = async (POIs, startLongitude, startLatitude) => {
-        setSights(POIs);
+        const POIsAndStartingLocation = [
+            ...POIs,
+            {
+                name: "Starting location",
+                rating: 5,
+                geometry: {
+                    location: {
+                        lat: startLatitude,
+                        lng: startLongitude,
+                    }
+                }
+            }
+        ];
+        setSights(POIsAndStartingLocation);
+
         // add the points to the map
-        console.log("debug POI points");
         POIs.forEach(poi => {
             const label = `${poi.name}\nRating: ${poi.rating}`
-            console.log(`label: ${label}`);
+
             
             addPointOnGraphic(
                 poi.geometry.location.lng,
@@ -186,7 +236,6 @@ const MapPage = ({ settings }) => {
 
         try {
             const response = await axios.get(routeServiceURL, { params });
-            console.log(response);
 
             if (response.data.routes) {
                 const routeGeometry = response.data.routes.features[0].geometry;
@@ -215,8 +264,6 @@ const MapPage = ({ settings }) => {
                         text: direction.attributes.text
                     }));
 
-                    console.log(`directions: `);
-                    console.log(directionsAsText);
                     setDirections(directionsAsText);
                 } else {
                     console.error("No directions found in the response.");
@@ -234,10 +281,10 @@ const MapPage = ({ settings }) => {
 
         const currentLocationSightList = [];
 
-        console.log("radius: ");
+        console.log("RADIUS: ");
         console.log(radius);
 
-        console.log("sights list: ");
+        console.log("SIGHTS LIST: ");
         console.log(sightsList);
         for (const sightType of sightsList) {
             const params = {
@@ -258,8 +305,9 @@ const MapPage = ({ settings }) => {
                 
                 // sorting the results so that the best ratings are first
                 uniqueResults.sort((a, b) => b.rating - a.rating);
-                console.log(uniqueResults);
 
+                console.log("MAX ENTRY NO. FOR EACH CATEGORY");
+                console.log(entryNo);
                 const bestResults = uniqueResults.slice(0, entryNo);
                 currentLocationSightList.push(...bestResults);
 
@@ -267,9 +315,8 @@ const MapPage = ({ settings }) => {
                 console.error('Error:', error);
             }
         }
-        
-        console.log(currentLocationSightList);
 
+        clearGraphics();
         setSights(currentLocationSightList);
         calculateAndPrintRoute(currentLocationSightList, longitude, latitude);
     };
@@ -283,7 +330,7 @@ const MapPage = ({ settings }) => {
             
             try {
                 const { longitude, latitude } = event.mapPoint;
-                console.log(`map coordinate: ${longitude}, ${latitude}`);
+
                 addPointOnGraphic(longitude, latitude, 'red');
                 setIsEditingArea(false);
                 await fetchPOIs(longitude, latitude);
@@ -336,49 +383,64 @@ const MapPage = ({ settings }) => {
         setSuggestions([]);
     };
 
-    const handleSaveRoute = async () => {
-        const token = localStorage.getItem('token');
-        if (!token) {
-            console.error('No token found in localStorage.');
-            return;
-        }
-
-        const sightListForExport = sights.map(sight => {
-            return {
-                name: sight.name,
-                rating: sight.rating,
-                longitude: sight.geometry.location.lng,
-                latitude: sight.geometry.location.lat,
+    // saving route
+    useEffect(() => {
+        const saveRoute = async () => {
+            if (!isAddRouteButtonClicked || sights.length === 0) {
+                return;
             }
-        });
 
-        const sightListAndCityNameForExport = {
-            city: currentCityName,
-            sights: sightListForExport
-        };
+            const token = localStorage.getItem('token');
+            if (!token) {
+                console.error('No token found in localStorage.');
+                return;
+            }
 
-        try {
-            const response = await axios.post(ADD_ROUTE_URL, {
-                data: sightListAndCityNameForExport
-            }, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
+            const sightListForExport = sights.map(sight => {
+                return {
+                    name: sight.name,
+                    rating: sight.rating,
+                    longitude: sight.geometry.location.lng,
+                    latitude: sight.geometry.location.lat,
                 }
             });
 
-            console.log(`received response, status: ${response.status}`);
+            const sightListAndCityNameForExport = {
+                city: currentCityName,
+                sites: sightListForExport
+            };
 
-            if (response.status == 200) {
-                setIsRouteAddedMessageVisible(true);
+            try {
+                const response = await axios.post(ADD_ROUTE_URL, {
+                    ...sightListAndCityNameForExport
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
 
-                setTimeout(() => {
-                    setIsRouteAddedMessageVisible(false)
-                }, 1500);
+                if (response.status == 201) {
+                    setIsRouteAddSuccessful(true);
+                }
+
+            } catch (error) {
+                console.error(`Error from sending post request to save route: ${error}`);
             }
-        } catch (error) {
-            console.error(`Error from sending post request to save route: ${error}`);
+
+            setIsRouteAddedMessageVisible(true);
+            setTimeout(() => {
+                setIsRouteAddedMessageVisible(false);
+                setIsRouteAddSuccessful(false);
+                setIsAddRouteButtonClicked(false);
+            }, 1500);
         }
+
+        saveRoute();
+    }, [sights, isAddRouteButtonClicked]);
+
+    const handleSaveRoute = () => {
+        setIsAddRouteButtonClicked(true);        
     };
 
     const handleBack = () => {
@@ -395,19 +457,19 @@ const MapPage = ({ settings }) => {
                     bottom: '20px',
                     left: '50%',
                     transform: 'translateX(-50%)',
-                    backgroundColor: '#4CAF50',  // Green color
+                    backgroundColor: isRouteAddSuccessful ? '#4CAF50' : '#F44336',
                     color: 'white',
                     padding: '10px 20px',
                     borderRadius: '5px',
                     boxShadow: '0 0 10px rgba(0, 0, 0, 0.2)',
                     zIndex: 1000
                 }}>
-                    Route has been saved!
+                    {isRouteAddSuccessful ? 'Route has been saved!' : 'Failed to save the route!'}
                 </div>
             )}
 
             {/* save the route button */}
-            {hasToken && sights.length > 0 && (
+            {hasToken && directions.length > 0 && (
                 <button
                     onClick={handleSaveRoute}
                     style={{
@@ -431,9 +493,7 @@ const MapPage = ({ settings }) => {
             {directions.length > 0 && (
                 <button
                     onClick={() => {
-                        console.log(`updating value of isEditingArea from ${isEditingArea}`);
                         setIsEditingArea(true);
-                        console.log(`to ${isEditingArea}`);
                         clearGraphics(); // Clear graphics when entering edit mode
                     }}
                     style={{

@@ -18,7 +18,8 @@ const SettingsPage = ({ settings, onSaveSettings }) => {
         "shopping mall"
     ];
 
-    const handleSave = () => {
+    const handleSave = (e) => {
+        e.preventDefault();
         const updatedSettings  = { radius, sightTypes, entryNoForEachSightType };
         onSaveSettings(updatedSettings); // Pass settings to the parent
         alert("Settings saved!");
